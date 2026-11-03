@@ -13,12 +13,14 @@ from src.processor import analyze_institute
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Multi-institute PDF duplicate checker via DORA & Solr with Caching & Rate-Lmiting.")
+    parser = argparse.ArgumentParser(description="Multi-institute PDF duplicate checker via DORA & Solr with Caching, Rate-Limiting & Time-Windows.")
     parser.add_argument("--config", default="config.toml", help="Path to config file")
     parser.add_argument("--fuzzy", action="store_true", help="Enable text fuzzy matching (82%) for PDFs with similar sizes")
     parser.add_argument("--force", action="store_true", help="Ignore existing cache backups and rescan everything from scratch")
     parser.add_argument("--delay", type=float, default=5.0, help="Delay in seconds between individual PDF downloads (default: 5.0s)")
     parser.add_argument("--max-hours", type=float, default=10.0, help="Maximum runtime in hours before graceful stop (default: 10.0h)")
+    parser.add_argument("--start-time", default=None, help="Startzeit im Format HH:MM (z.B. '08:00')")
+    parser.add_argument("--end-time", default=None, help="Endzeit im Format HH:MM (z.B. '06:00')")
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -47,12 +49,19 @@ def main() -> int:
 
     print(f"Running duplicate check for institutes: {', '.join(institutes)}")
     print(f"    - Fuzzy: {args.fuzzy} | Force: {args.force} | Delay: {args.delay}s | Max Run: {args.max_hours}h")
+    if args.start_time and args.end_time:
+        print(f"    - Zeitfenster aktiv: {args.start_time} Uhr bis {args.end_time} Uhr")
 
     all_results = []
     
     with ProcessPoolExecutor(max_workers=min(len(institutes), 4)) as executor:
         futures = {
-            executor.submit(analyze_institute, inst, year_range, solr_url, workers, args.fuzzy, args.force, args.delay, max_time_sec): inst
+            executor.submit(
+                analyze_institute, 
+                inst, year_range, solr_url, workers, 
+                args.fuzzy, args.force, args.delay, max_time_sec, 
+                args.start_time, args.end_time
+            ): inst
             for inst in institutes
         }
         for future in as_completed(futures):
@@ -76,7 +85,7 @@ def main() -> int:
     fuzzy_cross = sum(1 for g in fuzzy_groups if g.is_cross_pid)
     fuzzy_intra = len(fuzzy_groups) - fuzzy_cross
 
-    print(f"\nOverall Analysis Completd Across All Institutes:")
+    print(f"\nOverall Analysis Completed Across All Institutes:")
     print(f"    - Total file streams checked: {total_streams}")
     print(f"    - Total duplicate groups: {len(combined_duplicates)}")
     print(f"            - EXACT MATCHES (SHA256): {len(exact_groups)}")

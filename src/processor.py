@@ -5,6 +5,7 @@ from src.parser import parse_rels_int_supplements
 from src.progress import Progress
 from src.config import PDF_DSIDS, SIZE_PCT, SIZE_ABS, TEXT_FUZZY_MIN_CHARS, TEXT_FUZZY_RATIO
 
+import datetime
 import hashlib
 import json
 import threading
@@ -16,6 +17,32 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 import pymupdf
+
+
+def check_and_wait_time_window(start_time: str | None, end_time: str | None):
+    if not start_time or not end_time:
+        return
+    
+    while True:
+        now = datetime.datetime.now()
+        try:
+            start_t = datetime.datetime.strptime(start_time, "%H:%M").time()
+            end_t = datetime.datetime.strptime(end_time, "%H:%M").time()
+        except ValueError:
+            return
+
+        curr_t = now.time()
+        
+        if start_t <= end_t:
+            in_window = start_t <= curr_t <= end_t
+        else:
+            in_window = curr_t >= start_t or curr_t <= end_t
+            
+        if in_window:
+            break
+        
+        print(f"[!] Aktuelle Zeit {now.strftime('%H:%M:%S')} ausserhalb des Zeitfensters ({start_time} - {end_time}). Warte 60 Sekunden...", file=sys.stderr)
+        time.sleep(60)
 
 
 def extract_pdf_text(data: bytes, limit: int = 12000) -> str:
@@ -102,8 +129,19 @@ def process_doc(doc: dict[str, Any], extract_text: bool, delay: float) -> list[F
     return refs
 
 
-def analyze_institute(institute: str, year_range: str, solr_url: str, workers: int, fuzzy: bool, force: bool, delay: float, max_time_sec: float) -> dict[str, Any]:
-    start_time = time.time()
+def analyze_institute(
+    institute: str, 
+    year_range: str, 
+    solr_url: str, 
+    workers: int, 
+    fuzzy: bool, 
+    force: bool, 
+    delay: float, 
+    max_time_sec: float,
+    start_time: str | None = None,
+    end_time: str | None = None
+) -> dict[str, Any]:
+    start_time_run = time.time()
     docs = fetch_institute_pids(institute, year_range, solr_url)
     if not docs:
         return {"institute": institute, "all_refs_count": 0, "duplicates": []}
@@ -128,9 +166,16 @@ def analyze_institute(institute: str, year_range: str, solr_url: str, workers: i
         time_limit_reached = False
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(process_doc, doc, fuzzy, delay): doc.get("PID") for doc in docs_to_process}
+            futures = {}
+            for doc in docs_to_process:
+                check_and_wait_time_window(start_time, end_time)
+                fut = executor.submit(process_doc, doc, fuzzy, delay)
+                futures[fut] = doc.get("PID")
+
             for future in as_completed(futures):
-                if max_time_sec > 0 and (time.time() - start_time) > max_time_sec:
+                check_and_wait_time_window(start_time, end_time)
+
+                if max_time_sec > 0 and (time.time() - start_time_run) > max_time_sec:
                     time_limit_reached = True
                     break
 
