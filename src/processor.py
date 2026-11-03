@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sys
 from src.fetch import _http_get, fetch_institute_pids, fetch_stream_bytes, rels_int_url
 from src.model import DuplicateGroup, FileStreamRef
 from src.parser import parse_rels_int_supplements
@@ -41,7 +42,7 @@ def check_and_wait_time_window(start_time: str | None, end_time: str | None):
         if in_window:
             break
         
-        print(f"[!] Aktuelle Zeit {now.strftime('%H:%M:%S')} ausserhalb des Zeitfensters ({start_time} - {end_time}). Warte 60 Sekunden...", file=sys.stderr)
+        print(f"[!] Actual time {now.strftime('%H:%M:%S')} outside of ({start_time} - {end_time}). Waiting 60 seconds...", file=sys.stderr)
         time.sleep(60)
 
 
