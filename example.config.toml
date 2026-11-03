@@ -1,0 +1,12 @@
+# pls copy this to config.toml :)
+
+[institute]
+names = []
+year_range = ""          
+
+[settings]
+solr_url = ""
+admin_dora_base = ""
+workers = 4               
+output_json = ""
+output_csv = ""

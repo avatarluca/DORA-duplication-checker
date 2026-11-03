@@ -6,6 +6,12 @@ __pycache__/
 # C extensions
 *.so
 
+data/
+config.toml
+src/config.py
+
+cache_*.json
+
 # Distribution / packaging
 .Python
 build/
