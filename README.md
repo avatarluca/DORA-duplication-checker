@@ -1,4 +1,4 @@
-# Publication duplicate checker
+# DORA DeDup
 ## Usage
 Copy `config.example.toml` to `config.toml` and edit it to your needs.
 Also fill out the vals in `src/example.config.py` and rename it to `config.py`.
