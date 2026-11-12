@@ -127,7 +127,7 @@ def next_window_start(
 
 def task_xml(
     windows: list[ScheduleWindow], config_path: Path, args: argparse.Namespace
-) -> str:
+) -> bytes:
     ET.register_namespace("", TASK_XML_NAMESPACE)
     root = ET.Element(f"{{{TASK_XML_NAMESPACE}}}Task", version="1.4")
     registration = ET.SubElement(root, f"{{{TASK_XML_NAMESPACE}}}RegistrationInfo")
@@ -184,7 +184,7 @@ def task_xml(
     ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}Enabled").text = "true"
     ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}ExecutionTimeLimit").text = "PT24H"
     ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}Priority").text = "7"
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
+    return ET.tostring(root, encoding="utf-16", xml_declaration=True)
 
 
 def install_scheduled_task(
@@ -195,9 +195,7 @@ def install_scheduled_task(
         return 1
     xml_content = task_xml(windows, config_path, args)
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", suffix=".xml", delete=False
-        ) as task_file:
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".xml", delete=False) as task_file:
             task_file.write(xml_content)
             task_file_path = Path(task_file.name)
         try:
