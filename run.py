@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import getpass
 import json
 import logging
+import os
+import subprocess
 import sys
+import tempfile
 import tomllib
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -18,6 +23,8 @@ from src.processor import analyze_institute, get_cache_status
 
 logger = logging.getLogger("duplicate_checker")
 LOG_PATH = Path("duplicate_checker.log")
+TASK_NAME = "DORA-Duplicate-Checker"
+TASK_XML_NAMESPACE = "http://schemas.microsoft.com/windows/2004/02/mit/task"
 
 
 def configure_logging() -> None:
@@ -116,6 +123,147 @@ def next_window_start(
     if not candidates:
         raise ValueError("No future start found in schedule.windows")
     return min(candidates)
+
+
+def task_xml(
+    windows: list[ScheduleWindow], config_path: Path, args: argparse.Namespace
+) -> str:
+    ET.register_namespace("", TASK_XML_NAMESPACE)
+    root = ET.Element(f"{{{TASK_XML_NAMESPACE}}}Task", version="1.4")
+    registration = ET.SubElement(root, f"{{{TASK_XML_NAMESPACE}}}RegistrationInfo")
+    ET.SubElement(registration, f"{{{TASK_XML_NAMESPACE}}}Author").text = getpass.getuser()
+
+    principal = ET.SubElement(root, f"{{{TASK_XML_NAMESPACE}}}Principals")
+    principal_element = ET.SubElement(
+        principal, f"{{{TASK_XML_NAMESPACE}}}Principal", id="Author"
+    )
+    domain = os.environ.get("USERDOMAIN")
+    user_id = f"{domain}\\{getpass.getuser()}" if domain else getpass.getuser()
+    ET.SubElement(principal_element, f"{{{TASK_XML_NAMESPACE}}}UserId").text = user_id
+    ET.SubElement(principal_element, f"{{{TASK_XML_NAMESPACE}}}LogonType").text = "InteractiveToken"
+    ET.SubElement(principal_element, f"{{{TASK_XML_NAMESPACE}}}RunLevel").text = "LeastPrivilege"
+
+    triggers = ET.SubElement(root, f"{{{TASK_XML_NAMESPACE}}}Triggers")
+    now = datetime.datetime.now()
+    day_names = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    for window in windows:
+        trigger = ET.SubElement(triggers, f"{{{TASK_XML_NAMESPACE}}}CalendarTrigger")
+        upcoming = next_window_start(now, [window])
+        ET.SubElement(trigger, f"{{{TASK_XML_NAMESPACE}}}StartBoundary").text = upcoming.isoformat()
+        ET.SubElement(trigger, f"{{{TASK_XML_NAMESPACE}}}Enabled").text = "true"
+        weekly = ET.SubElement(trigger, f"{{{TASK_XML_NAMESPACE}}}ScheduleByWeek")
+        days = ET.SubElement(weekly, f"{{{TASK_XML_NAMESPACE}}}DaysOfWeek")
+        for day in sorted(window.days):
+            ET.SubElement(days, f"{{{TASK_XML_NAMESPACE}}}{day_names[day]}")
+        ET.SubElement(weekly, f"{{{TASK_XML_NAMESPACE}}}WeeksInterval").text = "1"
+
+    actions = ET.SubElement(root, f"{{{TASK_XML_NAMESPACE}}}Actions", Context="Author")
+    execute = ET.SubElement(actions, f"{{{TASK_XML_NAMESPACE}}}Exec")
+    ET.SubElement(execute, f"{{{TASK_XML_NAMESPACE}}}Command").text = sys.executable
+    command_args = [
+        str(Path(__file__).resolve()),
+        "--config",
+        str(config_path),
+        "--scheduled",
+        "--delay",
+        str(args.delay),
+        "--max-hours",
+        str(args.max_hours),
+    ]
+    if args.fuzzy:
+        command_args.append("--fuzzy")
+    ET.SubElement(execute, f"{{{TASK_XML_NAMESPACE}}}Arguments").text = subprocess.list2cmdline(command_args)
+    ET.SubElement(execute, f"{{{TASK_XML_NAMESPACE}}}WorkingDirectory").text = str(Path.cwd())
+
+    settings = ET.SubElement(root, f"{{{TASK_XML_NAMESPACE}}}Settings")
+    ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}MultipleInstancesPolicy").text = "IgnoreNew"
+    ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}DisallowStartIfOnBatteries").text = "false"
+    ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}StopIfGoingOnBatteries").text = "false"
+    ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}StartWhenAvailable").text = "false"
+    ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}WakeToRun").text = "true"
+    ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}Enabled").text = "true"
+    ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}ExecutionTimeLimit").text = "PT24H"
+    ET.SubElement(settings, f"{{{TASK_XML_NAMESPACE}}}Priority").text = "7"
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
+
+
+def install_scheduled_task(
+    windows: list[ScheduleWindow], config_path: Path, args: argparse.Namespace
+) -> int:
+    if os.name != "nt":
+        print("[!] Windows Task Scheduler is only available on Windows.", file=sys.stderr)
+        return 1
+    xml_content = task_xml(windows, config_path, args)
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".xml", delete=False
+        ) as task_file:
+            task_file.write(xml_content)
+            task_file_path = Path(task_file.name)
+        try:
+            result = subprocess.run(
+                ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", str(task_file_path), "/F"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        finally:
+            task_file_path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.exception("Could not create Task Scheduler entry")
+        print(f"[!] Could not create scheduled task: {exc}", file=sys.stderr)
+        return 1
+    if result.returncode:
+        logger.error("schtasks task creation failed: %s", result.stderr.strip())
+        print(f"[!] schtasks could not create the task: {result.stderr.strip()}", file=sys.stderr)
+        return 1
+    logger.info("Installed Windows scheduled task %s", TASK_NAME)
+    print(f"Installed Windows task {TASK_NAME} using {config_path}")
+    print("The task uses the configured TOML windows and will disable itself when all institutes reach 100%.")
+    return 0
+
+
+def remove_scheduled_task() -> int:
+    if os.name != "nt":
+        print("[!] Windows Task Scheduler is only available on Windows.", file=sys.stderr)
+        return 1
+    try:
+        result = subprocess.run(
+            ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        logger.exception("Could not remove Task Scheduler entry")
+        print(f"[!] Could not remove scheduled task: {exc}", file=sys.stderr)
+        return 1
+    if result.returncode:
+        logger.error("schtasks task deletion failed: %s", result.stderr.strip())
+        print(f"[!] schtasks could not delete the task: {result.stderr.strip()}", file=sys.stderr)
+        return 1
+    logger.info("Removed Windows scheduled task %s", TASK_NAME)
+    print(f"Removed Windows task {TASK_NAME}")
+    return 0
+
+
+def disable_scheduled_task() -> bool:
+    try:
+        result = subprocess.run(
+            ["schtasks", "/Change", "/TN", TASK_NAME, "/DISABLE"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        logger.exception("Could not disable Task Scheduler entry")
+        return False
+    if result.returncode:
+        logger.error("Could not disable scheduled task: %s", result.stderr.strip())
+        print(f"[!] Could not disable scheduled task: {result.stderr.strip()}", file=sys.stderr)
+        return False
+    logger.info("Disabled Windows scheduled task %s after reaching 100%%", TASK_NAME)
+    return True
 
 
 def wait_for_window(windows: list[ScheduleWindow]) -> datetime.datetime:
@@ -319,11 +467,18 @@ def main() -> int:
     parser.add_argument("--force", action="store_true", help="Ignore existing cache backups and rescan everything from scratch")
     parser.add_argument("--delay", type=float, default=5.0, help="Delay in seconds between individual PDF downloads (default: 5.0s)")
     parser.add_argument("--max-hours", type=float, default=10.0, help="Maximum runtime in hours before graceful stop (default: 10.0h)")
-    parser.add_argument("--status", action="store_true", help="Show cache and duplicate statistics without scanning")
-    parser.add_argument("--repeat", action="store_true", help="Keep running and scan once in each configured schedule window")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--status", action="store_true", help="Show cache and duplicate statistics without scanning")
+    mode.add_argument("--repeat", action="store_true", help="Keep running and scan once in each configured schedule window")
+    mode.add_argument("--install-task", action="store_true", help="Install a Windows task using schedule.windows from TOML")
+    mode.add_argument("--remove-task", action="store_true", help="Remove the installed Windows scheduled task")
+    mode.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--start-time", default=None, help="One-off daily window start in HH:MM format")
     parser.add_argument("--end-time", default=None, help="One-off daily window end in HH:MM format")
     args = parser.parse_args()
+
+    if args.remove_task:
+        return remove_scheduled_task()
 
     config_path = Path(args.config)
     if not config_path.exists():
@@ -357,15 +512,9 @@ def main() -> int:
     if (args.start_time is None) != (args.end_time is None):
         print("[!] --start-time and --end-time must be provided together.", file=sys.stderr)
         return 1
-    if args.status and (args.repeat or args.start_time or args.end_time):
-        print("[!] --status cannot be combined with repeat or time-window options.", file=sys.stderr)
+    if (args.install_task or args.remove_task or args.scheduled) and (args.start_time or args.end_time):
+        print("[!] Task Scheduler options cannot be combined with --start-time/--end-time.", file=sys.stderr)
         return 1
-
-    if args.status:
-        status_code, _ = print_status(
-            institutes, year_range, solr_url, fuzzy=args.fuzzy
-        )
-        return status_code
 
     try:
         configured_windows = parse_schedule(cfg.get("schedule", {}).get("windows", []))
@@ -373,6 +522,51 @@ def main() -> int:
     except (AttributeError, ValueError) as exc:
         print(f"[!] Invalid schedule: {exc}", file=sys.stderr)
         return 1
+
+    if args.install_task:
+        if not windows:
+            print("[!] --install-task requires schedule.windows in the config.", file=sys.stderr)
+            return 1
+        if args.force:
+            print("[!] --force cannot be installed in a recurring scheduled task.", file=sys.stderr)
+            return 1
+        return install_scheduled_task(windows, config_path.resolve(), args)
+
+    if args.status:
+        status_code, _ = print_status(institutes, year_range, solr_url, fuzzy=args.fuzzy)
+        return status_code
+
+    if args.scheduled:
+        if os.name != "nt":
+            print("[!] Scheduled task mode is only available on Windows.", file=sys.stderr)
+            return 1
+        if args.force:
+            print("[!] --force cannot be used in a recurring scheduled task.", file=sys.stderr)
+            return 1
+        window_end = active_window(datetime.datetime.now(), windows)
+        if window_end is None:
+            logger.warning("Scheduled task started outside a configured window; exiting")
+            return 0
+        status_code, complete = print_status(institutes, year_range, solr_url, fuzzy=args.fuzzy)
+        if status_code:
+            return status_code
+        if complete:
+            print("All configured institutes are at 100%; disabling the scheduled task.")
+            return 0 if disable_scheduled_task() else 1
+        seconds_left = max(1, (window_end - datetime.datetime.now()).total_seconds())
+        max_seconds = args.max_hours * 3600 if args.max_hours > 0 else seconds_left
+        result = run_analysis(
+            institutes, year_range, solr_url, workers, args, min(max_seconds, seconds_left)
+        )
+        if result:
+            return result
+        status_code, complete = print_status(institutes, year_range, solr_url, fuzzy=args.fuzzy)
+        if status_code:
+            return status_code
+        if complete:
+            print("All configured institutes are at 100%; disabling the scheduled task.")
+            return 0 if disable_scheduled_task() else 1
+        return result
 
     if args.repeat and not windows:
         print("[!] --repeat requires at least one schedule.windows entry in the config.", file=sys.stderr)
