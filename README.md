@@ -1,6 +1,7 @@
 # DORA DeDup
 
-Edit `config.toml` to select institutes and configure the Solr endpoint.
+Edit `config.toml` to select institutes (see `config.toml.example`).
+Also add a `src/config.py` file with your Solr infos (see `src/config.py.example`).
 
 ## Commands
 
