@@ -10,7 +10,8 @@ Show how much of the current Solr result is cached without scanning PDFs:
 python run.py --status
 ```
 
-Run one scan (cached publications are skipped):
+Run one scan (cached publications are skipped): 
+This runs the scan with a 5 sec delay (for rate limiting) and a maximum of 10 hours before stopping and also a fuzzy match threshold of 0.8 (default is 0.9), which can take much longer than without fuzzy matching.
 
 ```powershell
 python run.py --fuzzy --delay 5 --max-hours 10

@@ -11,6 +11,9 @@ config.toml
 src/config.py
 
 cache_*.json
+*.json
+*.csv
+
 
 # Distribution / packaging
 .Python
