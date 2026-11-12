@@ -10,3 +10,16 @@ admin_dora_base = ""
 workers = 4               
 output_json = ""
 output_csv = ""
+
+[schedule]
+# Example: add these entries to schedule.windows to scan Saturday/Sunday
+# during the day and Monday evening through Tuesday morning.
+# [[schedule.windows]]
+# days = ["sat", "sun"]
+# start = "08:00"
+# end = "18:00"
+#
+# [[schedule.windows]]
+# days = ["mon"]
+# start = "20:00"
+# end = "06:00"

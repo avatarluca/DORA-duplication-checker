@@ -15,7 +15,13 @@ def _http_get(url: str, accept: str = "*/*") -> bytes:
         return resp.read()
 
 
-def fetch_institute_pids(institute: str, year_range: str = "", solr_url: str = SOLR_SELECT_URL) -> list[dict[str, Any]]:
+def fetch_institute_pids(
+    institute: str,
+    year_range: str = "",
+    solr_url: str = SOLR_SELECT_URL,
+    *,
+    raise_errors: bool = False,
+) -> list[dict[str, Any]]:
     institute = institute.strip().lower()
     clauses = [f"PID:{institute}\\:*"]
     
@@ -44,6 +50,8 @@ def fetch_institute_pids(institute: str, year_range: str = "", solr_url: str = S
         return docs
     except Exception as exc:
         print(f"[!] Solr query error for {institute}: {exc}", file=sys.stderr)
+        if raise_errors:
+            raise RuntimeError(f"Solr query failed for {institute}") from exc
         return []
 
 
