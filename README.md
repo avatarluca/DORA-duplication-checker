@@ -31,14 +31,10 @@ As an alternative, install a Windows Task Scheduler entry from the same
 python run.py --install-task --fuzzy --delay 5 --max-hours 10
 ```
 
-This command explicitly creates the task `DORA-Duplicate-Checker`; it is not
-installed unless you run this command yourself. The task runs as your Windows
+This command explicitly creates the task `DORA-Duplicate-Checker` The task runs as your Windows
 user, uses the current Python executable and project folder, and reads the
-same TOML schedule. Windows is allowed to wake the PC from standby for a
-scheduled window, but missed starts are not run later if the PC was shut down.
-If you change the configured windows, run `--install-task` again to update the
-Windows triggers.
-Remove the task explicitly with:
+same TOML schedule. If you change the configured windows, run `--install-task` again to update the
+Windows triggers. Remove the task explicitly with:
 
 ```powershell
 python run.py --remove-task
