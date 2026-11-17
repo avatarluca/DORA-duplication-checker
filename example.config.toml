@@ -10,6 +10,8 @@ admin_dora_base = ""
 workers = 4               
 output_json = ""
 output_csv = ""
+output_postprocessed_csv = ""
+postprocessing_link_template = "" # placeholders def as 2-tuple (institute, pid)
 
 [schedule]
 # Example: add these entries to schedule.windows to scan Saturday/Sunday

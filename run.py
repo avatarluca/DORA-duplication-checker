@@ -465,6 +465,7 @@ def main() -> int:
     parser.add_argument("--force", action="store_true", help="Ignore existing cache backups and rescan everything from scratch")
     parser.add_argument("--delay", type=float, default=5.0, help="Delay in seconds between individual PDF downloads (default: 5.0s)")
     parser.add_argument("--max-hours", type=float, default=10.0, help="Maximum runtime in hours before graceful stop (default: 10.0h)")
+    parser.add_argument("--postprocess", action="store_true", help="Postprocess the JSON output to a CSV with links")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--status", action="store_true", help="Show cache and duplicate statistics without scanning")
     mode.add_argument("--repeat", action="store_true", help="Keep running and scan once in each configured schedule window")
@@ -477,6 +478,32 @@ def main() -> int:
 
     if args.remove_task:
         return remove_scheduled_task()
+
+    if args.postprocess:
+        from src.postprocessing import postprocess_json_duplicates
+
+        if not Path(args.config).exists():
+            print(f"[!] Config file {args.config} not found.", file=sys.stderr)
+            return 1
+        with open(args.config, "rb") as f:
+            cfg = tomllib.load(f)
+        output_json = cfg.get("settings", {}).get("output_json", "instituts_duplikate.json")
+        output_postprocessed_csv = cfg.get("settings", {}).get("output_postprocessed_csv", "instituts_duplikate_postprocessed.csv")
+        link_template = cfg.get("settings", {}).get("postprocessing_link_template", "")
+        if not Path(output_json).exists():
+            print(f"[!] JSON output file {output_json} not found for postprocessing.", file=sys.stderr)
+            return 1
+
+        with open(output_json, "r", encoding="utf-8") as f:
+            json_data = json.load(f)
+
+        processed_data = postprocess_json_duplicates(json_data, link_template)
+
+        import pandas as pd
+        df = pd.DataFrame(processed_data)
+        df.to_csv(output_postprocessed_csv, index=False, encoding="utf-8")
+        print(f"Postprocessed CSV saved to: {output_postprocessed_csv}")
+        return 0
 
     config_path = Path(args.config)
     if not config_path.exists():
